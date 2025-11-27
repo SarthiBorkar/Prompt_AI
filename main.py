@@ -1,12 +1,13 @@
 import os
 import uvicorn
 import uuid
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from masumi.config import Config
 from masumi.payment import Payment, Amount
-from crew_definition import ResearchCrew
+from prompt_engineering_crew import PromptEngineeringCrew
 from logging_config import setup_logging
 
 # Configure logging
@@ -69,13 +70,18 @@ class ProvideInputRequest(BaseModel):
 # CrewAI Task Execution
 # ─────────────────────────────────────────────────────────────────────────────
 async def execute_crew_task(input_data: str) -> str:
-    """ Execute a CrewAI task with Research and Writing Agents """
-    logger.info(f"Starting CrewAI task with input: {input_data}")
-    crew = ResearchCrew(logger=logger)
+    """ Execute a CrewAI task with Prompt Engineering Agents """
+    logger.info(f"Starting Prompt Engineering task with input: {input_data}")
+    crew = PromptEngineeringCrew(logger=logger, verbose=True)
+
     inputs = {"text": input_data}
-    result = crew.crew.kickoff(inputs)
-    logger.info("CrewAI task completed successfully")
-    return result
+    result = await crew.process_input(text=input_data, style="structured")
+    logger.info("Prompt engineering task completed successfully")
+
+    # Return the engineered prompt as string
+    if isinstance(result, dict) and result.get("success"):
+        return result.get("prompt", str(result))
+    return str(result)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1) Start Job (MIP-003: /start_job)
@@ -274,10 +280,10 @@ async def input_schema():
             {
                 "id": "text",
                 "type": "string",
-                "name": "Task Description",
+                "name": "Prompt Description",
                 "data": {
-                    "description": "The text input for the AI task",
-                    "placeholder": "Enter your task description here"
+                    "description": "Brief description of the prompt you need engineered",
+                    "placeholder": "e.g., 'Create a prompt for analyzing customer feedback sentiment'"
                 }
             }
         ]
@@ -301,30 +307,34 @@ async def health():
 def main():
     """Run the standalone agent flow without the API"""
     import os
+    import asyncio
     # Disable execution traces to avoid terminal issues
     os.environ['CREWAI_DISABLE_TELEMETRY'] = 'true'
-    
+
     print("\n" + "=" * 70)
-    print("🚀 Running CrewAI agents locally (standalone mode)...")
+    print("🚀 Running Prompt Engineering Agent locally (standalone mode)...")
     print("=" * 70 + "\n")
-    
+
     # Define test input
-    input_data = {"text": "The impact of AI on the job market"}
-    
-    print(f"Input: {input_data['text']}")
-    print("\nProcessing with CrewAI agents...\n")
-    
+    test_input = "Create a prompt for analyzing customer feedback sentiment"
+
+    print(f"Input: {test_input}")
+    print("\nProcessing with Prompt Engineering AI...\n")
+
     # Initialize and run the crew
-    crew = ResearchCrew(verbose=True)
-    result = crew.crew.kickoff(inputs=input_data)
-    
+    crew = PromptEngineeringCrew(verbose=True)
+    result = asyncio.run(crew.process_input(text=test_input, style="structured"))
+
     # Display the result
     print("\n" + "=" * 70)
-    print("✅ Crew Output:")
+    print("✅ Engineered Prompt:")
     print("=" * 70 + "\n")
-    print(result)
+    if isinstance(result, dict) and result.get("success"):
+        print(result.get("prompt"))
+    else:
+        print(result)
     print("\n" + "=" * 70 + "\n")
-    
+
     # Ensure terminal is properly reset after CrewAI execution
     sys.stdout.flush()
     sys.stderr.flush()

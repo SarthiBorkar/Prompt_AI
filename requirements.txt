@@ -6,3 +6,6 @@ masumi
 pydantic
 python-multipart
 httpx
+crewai[tools]
+langchain-groq
+litellm
