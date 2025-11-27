@@ -1,3 +1,12 @@
+---
+title: Prompt Engineering AI Agent
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
+
 # Prompt Engineering AI Agent 🤖
 
 A sophisticated AI-powered prompt engineering service that transforms brief, unstructured input into professionally optimized prompts. Built with CrewAI and integrated with Masumi Network for decentralized payments.
