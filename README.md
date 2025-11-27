@@ -298,7 +298,6 @@ Contributions welcome! Please:
 
 - **Issues**: https://github.com/SarthiBorkar/Prompt_AI/issues
 - **Masumi Docs**: https://docs.masumi.network
-- **Email**: [Your email]
 
 ---
 
