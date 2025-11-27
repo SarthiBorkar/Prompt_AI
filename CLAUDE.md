@@ -1,1 +1,2 @@
 - okay also make the readme about the ai agent
+- why did we make docker ignore?

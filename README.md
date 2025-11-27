@@ -214,20 +214,27 @@ Prompt_AI/
 
 ## 🌐 Deployment
 
-### Railway (Recommended)
+### 🆓 FREE Deployment Options
 
-1. Push to GitHub
-2. Go to [Railway.app](https://railway.app)
-3. Create new project from GitHub repo
-4. Add environment variables from `.env`
-5. Set start command: `python main.py api`
-6. Deploy!
+**Quick Start (5 minutes)**: See [`QUICKSTART_FREE_DEPLOY.md`](QUICKSTART_FREE_DEPLOY.md)
 
-### Other Platforms
+**Recommended FREE Platforms:**
 
-- **Render**: Use `python main.py api`
-- **Heroku**: Add `runtime.txt` and `Procfile`
-- **VPS**: Use systemd service or supervisor
+1. **Hugging Face Spaces** - Best for AI apps, never sleeps, 100% free
+   - [Quick Guide](QUICKSTART_FREE_DEPLOY.md#option-1-hugging-face-spaces)
+   - Always on, no credit card needed
+
+2. **Render.com** - Easiest setup, 100% free (sleeps after 15min)
+   - [Quick Guide](QUICKSTART_FREE_DEPLOY.md#option-2-rendercom)
+   - Auto-deploy from GitHub
+
+3. **Fly.io** - Production-ready free tier (requires credit card verification)
+
+4. **PythonAnywhere** - Free tier for Python apps
+
+**Full Guide**: See [`DEPLOYMENT.md`](DEPLOYMENT.md) for all options and detailed instructions
+
+**Note**: ❌ Netlify is NOT compatible (designed for static sites, not FastAPI)
 
 ## 🔐 Masumi Network Integration
 
