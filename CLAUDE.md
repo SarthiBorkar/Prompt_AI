@@ -1,0 +1,1 @@
+- okay also make the readme about the ai agent

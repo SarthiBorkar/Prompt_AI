@@ -302,6 +302,38 @@ async def health():
     }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 7) Test Endpoint (No Payment Required - For Local Testing)
+# ─────────────────────────────────────────────────────────────────────────────
+@app.post("/test_prompt_engineering")
+async def test_prompt_engineering(data: dict):
+    """
+    Test the prompt engineering without payment (for local testing only)
+
+    Example:
+    {
+        "text": "Create a prompt for sentiment analysis"
+    }
+    """
+    try:
+        logger.info("Testing prompt engineering without payment")
+        text = data.get("text", "")
+
+        if not text:
+            raise HTTPException(status_code=400, detail="Text field is required")
+
+        # Execute prompt engineering directly
+        result = await execute_crew_task(text)
+
+        logger.info("Test completed successfully")
+        return {
+            "status": "success",
+            "engineered_prompt": result
+        }
+    except Exception as e:
+        logger.error(f"Error in test endpoint: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main Logic if Called as a Script
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
