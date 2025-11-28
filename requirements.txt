@@ -9,3 +9,4 @@ httpx
 crewai[tools]
 langchain-groq
 litellm
+gunicorn
