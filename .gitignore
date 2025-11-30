@@ -38,11 +38,14 @@ job_results/
 logs/
 *.log
 
+# Internal documentation (not for public repo)
+CLAUDE.md
+INTEGRATION_LOG.md
+DEPLOYMENT_LOG.md
+docs/reference/CLAUDE.md
+
 # IDE
 .idea/
 .vscode/
 *.swp
-*.swo
-
-# Project specific
-job_results/ 
+*.swo 

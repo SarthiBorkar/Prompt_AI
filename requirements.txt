@@ -2,11 +2,13 @@ fastapi
 uvicorn
 python-dotenv
 crewai
-masumi
 pydantic
 python-multipart
 httpx
 crewai[tools]
 langchain-groq
 litellm
-gunicorn
+
+# Web Research Tools (optional - install if you want web search)
+duckduckgo-search  # Free web search (installed by default)
+# google-search-results  # Uncomment if you have SerperDev API key
