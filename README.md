@@ -16,6 +16,7 @@ A self-improving AI system that transforms simple ideas into professional, exper
 - **Advanced Techniques** - 10 cutting-edge patterns (Chain-of-Thought, ReAct, Tree-of-Thought, etc.)
 - **Web Research** - Real-time information gathering to prevent hallucination
 - **Multi-Agent** - 5-6 specialized AI agents working together
+- **Masumi Integration** - Blockchain payment integration via Masumi Network (MIP-003 compliant)
 
 ---
 
@@ -54,14 +55,65 @@ ENABLE_WEB_RESEARCH=true
 
 ### Usage
 
-**Interactive mode:**
+**CLI Mode (Interactive):**
 ```bash
+source venv/bin/activate
 python main_simple.py
 ```
 
-**Single prompt:**
+**CLI Mode (Single prompt):**
 ```bash
+source venv/bin/activate
 python main_simple.py "Create a prompt for code review"
+```
+
+**API Mode (Masumi Integration):**
+```bash
+# Quick start
+./run_api.sh
+
+# Or manually
+source venv/bin/activate
+python main.py api
+```
+
+API will be available at:
+- **Docs**: http://127.0.0.1:8000/docs
+- **Availability**: http://127.0.0.1:8000/availability
+- **Input Schema**: http://127.0.0.1:8000/input_schema
+
+**API Mode Configuration:**
+
+Add to your `.env` file:
+```env
+# Masumi Payment Integration
+PAYMENT_SERVICE_URL=http://localhost:3001/api/v1
+PAYMENT_API_KEY=your_payment_api_key
+AGENT_IDENTIFIER=your_agent_identifier
+PAYMENT_AMOUNT=10000000
+PAYMENT_UNIT=lovelace
+SELLER_VKEY=your_seller_vkey
+NETWORK=Preprod
+```
+
+**Test API Endpoints:**
+```bash
+# Check availability
+curl http://127.0.0.1:8000/availability
+
+# Start a job
+curl -X POST http://127.0.0.1:8000/start_job \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identifier_from_purchaser": "abc123",
+    "input_data": {
+      "text": "Create a prompt for code review",
+      "style": "structured"
+    }
+  }'
+
+# Check job status
+curl "http://127.0.0.1:8000/status?job_id=YOUR_JOB_ID"
 ```
 
 ---

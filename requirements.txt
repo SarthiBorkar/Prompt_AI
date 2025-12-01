@@ -8,6 +8,7 @@ httpx
 crewai[tools]
 langchain-groq
 litellm
+masumi
 
 # Web Research Tools (optional - install if you want web search)
 duckduckgo-search  # Free web search (installed by default)

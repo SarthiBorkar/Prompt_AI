@@ -1,0 +1,342 @@
+import os
+import uvicorn
+import uuid
+from dotenv import load_dotenv
+from fastapi import FastAPI, Query, HTTPException
+from pydantic import BaseModel
+from masumi.config import Config
+from masumi.payment import Payment, Amount
+from crew_definition import PromptCrew
+from logging_config import setup_logging
+
+# Configure logging
+logger = setup_logging()
+
+# Load environment variables
+load_dotenv(override=True)
+
+# Retrieve API Keys and URLs
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+PAYMENT_SERVICE_URL = os.getenv("PAYMENT_SERVICE_URL")
+PAYMENT_API_KEY = os.getenv("PAYMENT_API_KEY")
+NETWORK = os.getenv("NETWORK")
+
+logger.info("Starting application with configuration:")
+logger.info(f"PAYMENT_SERVICE_URL: {PAYMENT_SERVICE_URL}")
+
+# Initialize FastAPI
+app = FastAPI(
+    title="Prompt Engineering AI Agent - Masumi Compatible",
+    description="API for professional prompt engineering with Masumi payment integration",
+    version="1.0.0"
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Temporary in-memory job store (DO NOT USE IN PRODUCTION)
+# ─────────────────────────────────────────────────────────────────────────────
+jobs = {}
+payment_instances = {}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Initialize Masumi Payment Config
+# ─────────────────────────────────────────────────────────────────────────────
+config = Config(
+    payment_service_url=PAYMENT_SERVICE_URL,
+    payment_api_key=PAYMENT_API_KEY
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pydantic Models
+# ─────────────────────────────────────────────────────────────────────────────
+class StartJobRequest(BaseModel):
+    identifier_from_purchaser: str
+    input_data: dict[str, str]
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "identifier_from_purchaser": "example_purchaser_123",
+                "input_data": {
+                    "text": "Create a prompt for code review",
+                    "style": "structured"
+                }
+            }
+        }
+
+class ProvideInputRequest(BaseModel):
+    job_id: str
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CrewAI Task Execution
+# ─────────────────────────────────────────────────────────────────────────────
+async def execute_crew_task(input_data: dict) -> str:
+    """ Execute prompt engineering crew """
+    logger.info(f"Starting PromptCrew task with input: {input_data.get('text', '')[:50]}...")
+    crew = PromptCrew(logger=logger, verbose=False)
+
+    # Extract input parameters
+    text = input_data.get("text", "")
+    style = input_data.get("style", "structured")
+
+    # Run the crew (it's async)
+    result = await crew.crew.process_input(text=text, style=style)
+
+    logger.info("PromptCrew task completed successfully")
+    return result
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1) Start Job (MIP-003: /start_job)
+# ─────────────────────────────────────────────────────────────────────────────
+@app.post("/start_job")
+async def start_job(data: StartJobRequest):
+    """ Initiates a job and creates a payment request """
+    try:
+        job_id = str(uuid.uuid4())
+        agent_identifier = os.getenv("AGENT_IDENTIFIER")
+
+        # Log the input text (truncate if too long)
+        input_text = data.input_data.get("text", "")
+        truncated_input = input_text[:100] + "..." if len(input_text) > 100 else input_text
+        logger.info(f"Received job request with input: '{truncated_input}'")
+        logger.info(f"Starting job {job_id} with agent {agent_identifier}")
+
+        # Define payment amounts
+        payment_amount = os.getenv("PAYMENT_AMOUNT", "10000000")  # Default 10 ADA
+        payment_unit = os.getenv("PAYMENT_UNIT", "lovelace")
+
+        amounts = [Amount(amount=payment_amount, unit=payment_unit)]
+        logger.info(f"Using payment amount: {payment_amount} {payment_unit}")
+
+        # Create a payment request using Masumi
+        payment = Payment(
+            agent_identifier=agent_identifier,
+            config=config,
+            identifier_from_purchaser=data.identifier_from_purchaser,
+            input_data=data.input_data,
+            network=NETWORK
+        )
+
+        logger.info("Creating payment request...")
+        payment_request = await payment.create_payment_request()
+        blockchain_identifier = payment_request["data"]["blockchainIdentifier"]
+        payment.payment_ids.add(blockchain_identifier)
+        logger.info(f"Created payment request with blockchain identifier: {blockchain_identifier}")
+
+        # Store job info (Awaiting payment)
+        jobs[job_id] = {
+            "status": "awaiting_payment",
+            "payment_status": "pending",
+            "blockchain_identifier": blockchain_identifier,
+            "input_data": data.input_data,
+            "result": None,
+            "identifier_from_purchaser": data.identifier_from_purchaser
+        }
+
+        async def payment_callback(blockchain_identifier: str):
+            await handle_payment_status(job_id, blockchain_identifier)
+
+        # Start monitoring the payment status
+        payment_instances[job_id] = payment
+        logger.info(f"Starting payment status monitoring for job {job_id}")
+        await payment.start_status_monitoring(payment_callback)
+
+        # Return the response in the required format
+        return {
+            "status": "success",
+            "job_id": job_id,
+            "blockchainIdentifier": blockchain_identifier,
+            "submitResultTime": payment_request["data"]["submitResultTime"],
+            "unlockTime": payment_request["data"]["unlockTime"],
+            "externalDisputeUnlockTime": payment_request["data"]["externalDisputeUnlockTime"],
+            "agentIdentifier": agent_identifier,
+            "sellerVKey": os.getenv("SELLER_VKEY"),
+            "identifierFromPurchaser": data.identifier_from_purchaser,
+            "amounts": amounts,
+            "input_hash": payment.input_hash,
+            "payByTime": payment_request["data"]["payByTime"],
+        }
+    except KeyError as e:
+        logger.error(f"Missing required field in request: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail="Bad Request: input_data or identifier_from_purchaser is missing, invalid, or does not adhere to the schema."
+        )
+    except Exception as e:
+        logger.error(f"Error in start_job: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail="Input_data or identifier_from_purchaser is missing, invalid, or does not adhere to the schema."
+        )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2) Process Payment and Execute AI Task
+# ─────────────────────────────────────────────────────────────────────────────
+async def handle_payment_status(job_id: str, payment_id: str) -> None:
+    """ Executes PromptCrew task after payment confirmation """
+    try:
+        logger.info(f"Payment {payment_id} completed for job {job_id}, executing task...")
+
+        # Update job status to running
+        jobs[job_id]["status"] = "running"
+        logger.info(f"Input data: {jobs[job_id]['input_data']}")
+
+        # Execute the AI task
+        result = await execute_crew_task(jobs[job_id]["input_data"])
+        logger.info(f"Crew task completed for job {job_id}")
+
+        # Extract result string from the crew output
+        if isinstance(result, dict) and result.get("success"):
+            # Get the prompt from result
+            result_string = result.get("prompt", str(result))
+        else:
+            result_string = str(result)
+
+        # Mark payment as completed on Masumi
+        await payment_instances[job_id].complete_payment(payment_id, result_string)
+        logger.info(f"Payment completed for job {job_id}")
+
+        # Update job status
+        jobs[job_id]["status"] = "completed"
+        jobs[job_id]["payment_status"] = "completed"
+        jobs[job_id]["result"] = result
+
+        # Stop monitoring payment status
+        if job_id in payment_instances:
+            payment_instances[job_id].stop_status_monitoring()
+            del payment_instances[job_id]
+    except Exception as e:
+        logger.error(f"Error processing payment {payment_id} for job {job_id}: {str(e)}", exc_info=True)
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["error"] = str(e)
+
+        # Still stop monitoring to prevent repeated failures
+        if job_id in payment_instances:
+            payment_instances[job_id].stop_status_monitoring()
+            del payment_instances[job_id]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3) Check Job and Payment Status (MIP-003: /status)
+# ─────────────────────────────────────────────────────────────────────────────
+@app.get("/status")
+async def get_status(job_id: str):
+    """ Retrieves the current status of a specific job """
+    logger.info(f"Checking status for job {job_id}")
+    if job_id not in jobs:
+        logger.warning(f"Job {job_id} not found")
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = jobs[job_id]
+
+    # Check latest payment status if payment instance exists
+    if job_id in payment_instances:
+        try:
+            status = await payment_instances[job_id].check_payment_status()
+            job["payment_status"] = status.get("data", {}).get("status")
+            logger.info(f"Updated payment status for job {job_id}: {job['payment_status']}")
+        except Exception as e:
+            logger.error(f"Error checking payment status: {str(e)}", exc_info=True)
+            job["payment_status"] = "error"
+
+    # Extract result
+    result_data = job.get("result")
+    if isinstance(result_data, dict):
+        result = result_data.get("prompt") or str(result_data)
+    else:
+        result = str(result_data) if result_data else None
+
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "payment_status": job["payment_status"],
+        "result": result
+    }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4) Check Server Availability (MIP-003: /availability)
+# ─────────────────────────────────────────────────────────────────────────────
+@app.get("/availability")
+async def check_availability():
+    """ Checks if the server is operational """
+    return {"status": "available", "type": "masumi-agent", "message": "Server operational."}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5) Retrieve Input Schema (MIP-003: /input_schema)
+# ─────────────────────────────────────────────────────────────────────────────
+@app.get("/input_schema")
+async def input_schema():
+    """
+    Returns the expected input schema for the /start_job endpoint.
+    Fulfills MIP-003 /input_schema endpoint.
+    """
+    return {
+        "input_data": [
+            {
+                "id": "text",
+                "type": "string",
+                "name": "Prompt Description",
+                "data": {
+                    "description": "Description of the prompt you need",
+                    "placeholder": "Create a prompt for code review"
+                }
+            },
+            {
+                "id": "style",
+                "type": "string",
+                "name": "Output Style",
+                "data": {
+                    "description": "Output style (structured/minimal/conversational)",
+                    "placeholder": "structured"
+                }
+            }
+        ]
+    }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6) Health Check
+# ─────────────────────────────────────────────────────────────────────────────
+@app.get("/health")
+async def health():
+    """
+    Returns the health of the server.
+    """
+    return {
+        "status": "healthy"
+    }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main Logic if Called as a Script
+# ─────────────────────────────────────────────────────────────────────────────
+def main():
+    """Run the standalone agent flow without the API"""
+    import sys
+    os.environ['CREWAI_DISABLE_TELEMETRY'] = 'true'
+
+    print("\n" + "=" * 70)
+    print("🚀 Running Prompt Engineering Crew locally (standalone mode)...")
+    print("=" * 70 + "\n")
+
+    # Run existing CLI
+    from main_simple import main as cli_main
+    cli_main()
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "api":
+        # Run API mode
+        port = int(os.environ.get("API_PORT", 8000))
+        host = os.environ.get("API_HOST", "0.0.0.0")
+
+        print("\n" + "=" * 70)
+        print("🚀 Starting FastAPI server with Masumi integration...")
+        print("=" * 70)
+        print(f"API Documentation:        http://{host}:{port}/docs")
+        print(f"Availability Check:       http://{host}:{port}/availability")
+        print(f"Status Check:             http://{host}:{port}/status")
+        print(f"Input Schema:             http://{host}:{port}/input_schema\n")
+        print("=" * 70 + "\n")
+
+        uvicorn.run(app, host=host, port=port, log_level="info")
+    else:
+        # Run standalone mode
+        main()
