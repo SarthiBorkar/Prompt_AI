@@ -30,11 +30,34 @@ NETWORK = os.getenv("NETWORK", "Preprod")
 PAYMENT_AMOUNT = os.getenv("PAYMENT_AMOUNT", "10000000")
 PAYMENT_UNIT = os.getenv("PAYMENT_UNIT", "lovelace")
 
-# Initialize FastAPI
+# Initialize FastAPI with production metadata
 app = FastAPI(
-    title="Prompt Engineering AI Agent",
-    description="MIP-003 compliant prompt engineering service",
-    version="1.0.0"
+    title="Production PRD Generator AI Agent",
+    description="""
+    MIP-003 compliant AI agent that generates production-ready Product Requirements Documents (PRDs).
+
+    **Features:**
+    - Analyzes user input and extracts requirements
+    - Generates professional PRD with 8 standard sections
+    - Quality validation with iterative refinement
+    - Token-optimized for cost efficiency
+    - Rate limiting and input validation
+
+    **Output Format:**
+    - Product Overview
+    - Problem Statement
+    - Goals & Objectives
+    - User Stories
+    - Functional Requirements
+    - Non-Functional Requirements
+    - Success Metrics
+    - Out of Scope
+    """,
+    version="2.0.0",
+    contact={
+        "name": "Prompt Engineering Team",
+        "email": "support@promptai.dev"
+    }
 )
 
 # Job storage
@@ -51,6 +74,7 @@ config = Config(
 # Models
 # ─────────────────────────────────────────────────────────────────────────────
 class StartJobRequest(BaseModel):
+    """Request model for starting a new PRD generation job"""
     identifier_from_purchaser: str
     input_data: Dict[str, str]
 
@@ -60,7 +84,8 @@ class StartJobRequest(BaseModel):
                 {
                     "identifier_from_purchaser": "user_123",
                     "input_data": {
-                        "text": "Create a prompt for bakery menu app"
+                        "text": "Build a mobile app for restaurant order management with real-time kitchen updates",
+                        "style": "structured"
                     }
                 }
             ]
@@ -74,15 +99,47 @@ class ProvideInputRequest(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 # Core Function
 # ─────────────────────────────────────────────────────────────────────────────
-async def execute_prompt_engineering(text: str) -> str:
-    """Execute the prompt engineering task"""
-    logger.info(f"Processing: {text[:100]}...")
-    crew = PromptEngineeringCrew(logger=logger, verbose=True)
-    result = await crew.process_input(text=text, style="structured")
+async def execute_prompt_engineering(text: str, style: str = "structured") -> Dict:
+    """
+    Execute PRD generation with clean output
 
-    if isinstance(result, dict) and result.get("success"):
-        return result.get("prompt", str(result))
-    return str(result)
+    Args:
+        text: User input describing the product/feature
+        style: Output style (default: structured)
+
+    Returns:
+        Dict with PRD or error info
+    """
+    try:
+        crew = PromptEngineeringCrew(logger=logger, verbose=False)
+        result = await crew.process_input(text=text, style=style)
+
+        if isinstance(result, dict) and result.get("success"):
+            return {
+                "success": True,
+                "prd": result.get("prd", ""),
+                "metadata": result.get("metadata", {})
+            }
+        else:
+            return result
+
+    except Exception as e:
+        error_msg = str(e)
+
+        # Handle rate limit errors with helpful message
+        if "rate_limit" in error_msg.lower():
+            return {
+                "success": False,
+                "error": "Rate limit reached. Please try again later or upgrade your Groq tier.",
+                "error_type": "RateLimitError",
+                "details": error_msg
+            }
+
+        return {
+            "success": False,
+            "error": error_msg,
+            "error_type": type(e).__name__
+        }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MIP-003 Endpoints
@@ -278,29 +335,55 @@ async def health():
 # Standalone Mode
 # ─────────────────────────────────────────────────────────────────────────────
 def main_standalone():
-    """Run without API"""
+    """Run without API - Clean CLI interface"""
+    import sys
     os.environ['CREWAI_DISABLE_TELEMETRY'] = 'true'
 
     print("\n" + "=" * 70)
-    print("🚀 Prompt Engineering AI Agent")
+    print("🚀 PRD Generator AI Agent")
     print("=" * 70 + "\n")
 
-    test_input = "Create a prompt for analyzing customer feedback sentiment"
-    print(f"Input: {test_input}\n")
-
-    crew = PromptEngineeringCrew(verbose=True)
-    result = asyncio.run(crew.process_input(text=test_input, style="structured"))
-
-    print("\n" + "=" * 70)
-    print("✅ Engineered Prompt:")
-    print("=" * 70 + "\n")
-
-    if isinstance(result, dict) and result.get("success"):
-        print(result.get("prompt"))
+    # Get input from command line or use default
+    if len(sys.argv) > 2:
+        user_input = " ".join(sys.argv[2:])
     else:
-        print(result)
+        user_input = "Create a prompt for analyzing customer feedback sentiment"
 
-    print("\n" + "=" * 70 + "\n")
+    print(f"Input: {user_input}\n")
+    print("⏳ Generating PRD...\n")
+
+    try:
+        result = asyncio.run(execute_prompt_engineering(user_input, style="structured"))
+
+        print("=" * 70)
+        if result.get("success"):
+            print("✅ Generated PRD:")
+            print("=" * 70 + "\n")
+            print(result.get("prd", ""))
+
+            # Show metadata
+            metadata = result.get("metadata", {})
+            if metadata:
+                print("\n" + "-" * 70)
+                print(f"📊 Word Count: {metadata.get('word_count', 'N/A')}")
+                print("-" * 70)
+        else:
+            print("❌ Error:")
+            print("=" * 70 + "\n")
+            print(f"Type: {result.get('error_type', 'Unknown')}")
+            print(f"Message: {result.get('error', 'Unknown error')}")
+
+            if result.get("details"):
+                print(f"\nDetails: {result['details']}")
+
+        print("\n" + "=" * 70 + "\n")
+
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Interrupted by user\n")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n❌ Fatal Error: {str(e)}\n")
+        sys.exit(1)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
