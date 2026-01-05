@@ -1,10 +1,16 @@
+"""
+Prompt Engineering AI Agent - MIP-003 Compliant
+"""
+
 import os
+import sys
+import asyncio
 import uvicorn
 import uuid
-from typing import Dict, Any, Optional
+from typing import Dict
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
 from masumi.config import Config
 from masumi.payment import Payment, Amount
 from prompt_engineering_crew import PromptEngineeringCrew
@@ -16,265 +22,84 @@ logger = setup_logging()
 # Load environment variables
 load_dotenv(override=True)
 
-# Retrieve API Keys and URLs
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Configuration
+AGENT_IDENTIFIER = os.getenv("AGENT_IDENTIFIER")
 PAYMENT_SERVICE_URL = os.getenv("PAYMENT_SERVICE_URL")
 PAYMENT_API_KEY = os.getenv("PAYMENT_API_KEY")
-NETWORK = os.getenv("NETWORK")
-
-logger.info("Starting application with configuration:")
-logger.info(f"PAYMENT_SERVICE_URL: {PAYMENT_SERVICE_URL}")
+NETWORK = os.getenv("NETWORK", "Preprod")
+PAYMENT_AMOUNT = os.getenv("PAYMENT_AMOUNT", "10000000")
+PAYMENT_UNIT = os.getenv("PAYMENT_UNIT", "lovelace")
 
 # Initialize FastAPI
 app = FastAPI(
-    title="API following the Masumi API Standard",
-    description="API for running Agentic Services tasks with Masumi payment integration",
+    title="Prompt Engineering AI Agent",
+    description="MIP-003 compliant prompt engineering service",
     version="1.0.0"
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Temporary in-memory job store (DO NOT USE IN PRODUCTION)
-# ─────────────────────────────────────────────────────────────────────────────
+# Job storage
 jobs = {}
 payment_instances = {}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Initialize Masumi Payment Config
-# ─────────────────────────────────────────────────────────────────────────────
+# Masumi config
 config = Config(
     payment_service_url=PAYMENT_SERVICE_URL,
     payment_api_key=PAYMENT_API_KEY
-)
+) if PAYMENT_SERVICE_URL and PAYMENT_API_KEY else None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Pydantic Models
+# Models
 # ─────────────────────────────────────────────────────────────────────────────
 class StartJobRequest(BaseModel):
     identifier_from_purchaser: str
-    input_data: dict[str, str]
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "identifier_from_purchaser": "example_purchaser_123",
-                "input_data": {
-                    "text": "Write a story about a robot learning to paint"
+    input_data: Dict[str, str]
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "identifier_from_purchaser": "user_123",
+                    "input_data": {
+                        "text": "Create a prompt for bakery menu app"
+                    }
                 }
-            }
+            ]
         }
+    }
 
 class ProvideInputRequest(BaseModel):
     job_id: str
+    input_data: Dict[str, str]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CrewAI Task Execution
+# Core Function
 # ─────────────────────────────────────────────────────────────────────────────
-async def execute_crew_task(input_data: str) -> str:
-    """ Execute a CrewAI task with Prompt Engineering Agents """
-    logger.info(f"Starting Prompt Engineering task with input: {input_data}")
+async def execute_prompt_engineering(text: str) -> str:
+    """Execute the prompt engineering task"""
+    logger.info(f"Processing: {text[:100]}...")
     crew = PromptEngineeringCrew(logger=logger, verbose=True)
+    result = await crew.process_input(text=text, style="structured")
 
-    inputs = {"text": input_data}
-    result = await crew.process_input(text=input_data, style="structured")
-    logger.info("Prompt engineering task completed successfully")
-
-    # Return the engineered prompt as string
     if isinstance(result, dict) and result.get("success"):
         return result.get("prompt", str(result))
     return str(result)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1) Start Job (MIP-003: /start_job)
+# MIP-003 Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
-@app.post("/start_job")
-async def start_job(data: StartJobRequest):
-    """ Initiates a job and creates a payment request """
-    print(f"Received data: {data}")
-    print(f"Received data.input_data: {data.input_data}")
-    try:
-        job_id = str(uuid.uuid4())
-        agent_identifier = os.getenv("AGENT_IDENTIFIER")
-        
-        # Log the input text (truncate if too long)
-        input_text = data.input_data["text"]
-        truncated_input = input_text[:100] + "..." if len(input_text) > 100 else input_text
-        logger.info(f"Received job request with input: '{truncated_input}'")
-        logger.info(f"Starting job {job_id} with agent {agent_identifier}")
 
-        # Define payment amounts
-        payment_amount = os.getenv("PAYMENT_AMOUNT", "10000000")  # Default 10 ADA
-        payment_unit = os.getenv("PAYMENT_UNIT", "lovelace") # Default lovelace
-
-        amounts = [Amount(amount=payment_amount, unit=payment_unit)]
-        logger.info(f"Using payment amount: {payment_amount} {payment_unit}")
-        
-        # Create a payment request using Masumi
-        payment = Payment(
-            agent_identifier=agent_identifier,
-            #amounts=amounts,
-            config=config,
-            identifier_from_purchaser=data.identifier_from_purchaser,
-            input_data=data.input_data,
-            network=NETWORK
-        )
-        
-        logger.info("Creating payment request...")
-        payment_request = await payment.create_payment_request()
-        blockchain_identifier = payment_request["data"]["blockchainIdentifier"]
-        payment.payment_ids.add(blockchain_identifier)
-        logger.info(f"Created payment request with blockchain identifier: {blockchain_identifier}")
-
-        # Store job info (Awaiting payment)
-        jobs[job_id] = {
-            "status": "awaiting_payment",
-            "payment_status": "pending",
-            "blockchain_identifier": blockchain_identifier,
-            "input_data": data.input_data,
-            "result": None,
-            "identifier_from_purchaser": data.identifier_from_purchaser
-        }
-
-        async def payment_callback(blockchain_identifier: str):
-            await handle_payment_status(job_id, blockchain_identifier)
-
-        # Start monitoring the payment status
-        payment_instances[job_id] = payment
-        logger.info(f"Starting payment status monitoring for job {job_id}")
-        await payment.start_status_monitoring(payment_callback)
-
-        # Return the response in the required format
-        return {
-            "status": "success",
-            "job_id": job_id,
-            "blockchainIdentifier": blockchain_identifier,
-            "submitResultTime": payment_request["data"]["submitResultTime"],
-            "unlockTime": payment_request["data"]["unlockTime"],
-            "externalDisputeUnlockTime": payment_request["data"]["externalDisputeUnlockTime"],
-            "agentIdentifier": agent_identifier,
-            "sellerVKey": os.getenv("SELLER_VKEY"),
-            "identifierFromPurchaser": data.identifier_from_purchaser,
-            "amounts": amounts,
-            "input_hash": payment.input_hash,
-            "payByTime": payment_request["data"]["payByTime"],
-        }
-    except KeyError as e:
-        logger.error(f"Missing required field in request: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=400,
-            detail="Bad Request: If input_data or identifier_from_purchaser is missing, invalid, or does not adhere to the schema."
-        )
-    except Exception as e:
-        logger.error(f"Error in start_job: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=400,
-            detail="Input_data or identifier_from_purchaser is missing, invalid, or does not adhere to the schema."
-        )
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2) Process Payment and Execute AI Task
-# ─────────────────────────────────────────────────────────────────────────────
-async def handle_payment_status(job_id: str, payment_id: str) -> None:
-    """ Executes CrewAI task after payment confirmation """
-    try:
-        logger.info(f"Payment {payment_id} completed for job {job_id}, executing task...")
-        
-        # Update job status to running
-        jobs[job_id]["status"] = "running"
-        logger.info(f"Input data: {jobs[job_id]["input_data"]}")
-
-        # Execute the AI task
-        result = await execute_crew_task(jobs[job_id]["input_data"])
-        print(f"Result: {result}")
-        logger.info(f"Crew task completed for job {job_id}")
-        
-        # Convert result to string for payment completion
-        # Check if result has .raw attribute (CrewOutput), otherwise convert to string
-        result_string = result.raw if hasattr(result, "raw") else str(result)
-        
-        # Mark payment as completed on Masumi
-        # Use a shorter string for the result hash
-        await payment_instances[job_id].complete_payment(payment_id, result_string)
-        logger.info(f"Payment completed for job {job_id}")
-
-        # Update job status
-        jobs[job_id]["status"] = "completed"
-        jobs[job_id]["payment_status"] = "completed"
-        jobs[job_id]["result"] = result
-
-        # Stop monitoring payment status
-        if job_id in payment_instances:
-            payment_instances[job_id].stop_status_monitoring()
-            del payment_instances[job_id]
-    except Exception as e:
-        print(f"Error processing payment {payment_id} for job {job_id}: {str(e)}")
-        jobs[job_id]["status"] = "failed"
-        jobs[job_id]["error"] = str(e)
-        
-        # Still stop monitoring to prevent repeated failures
-        if job_id in payment_instances:
-            payment_instances[job_id].stop_status_monitoring()
-            del payment_instances[job_id]
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3) Check Job and Payment Status (MIP-003: /status)
-# ─────────────────────────────────────────────────────────────────────────────
-@app.get("/status")
-async def get_status(job_id: str):
-    """ Retrieves the current status of a specific job """
-    logger.info(f"Checking status for job {job_id}")
-    if job_id not in jobs:
-        logger.warning(f"Job {job_id} not found")
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    job = jobs[job_id]
-
-    # Check latest payment status if payment instance exists
-    if job_id in payment_instances:
-        try:
-            status = await payment_instances[job_id].check_payment_status()
-            job["payment_status"] = status.get("data", {}).get("status")
-            logger.info(f"Updated payment status for job {job_id}: {job['payment_status']}")
-        except ValueError as e:
-            logger.warning(f"Error checking payment status: {str(e)}")
-            job["payment_status"] = "unknown"
-        except Exception as e:
-            logger.error(f"Error checking payment status: {str(e)}", exc_info=True)
-            job["payment_status"] = "error"
-
-
-    result_data = job.get("result")
-    logger.info(f"Result data: {result_data}")
-    result = result_data.raw if result_data and hasattr(result_data, "raw") else None
-
-
-
-    return {
-        "job_id": job_id,
-        "status": job["status"],
-        "payment_status": job["payment_status"],
-        "result": result
-    }
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4) Check Server Availability (MIP-003: /availability)
-# ─────────────────────────────────────────────────────────────────────────────
 @app.get("/availability")
 async def check_availability():
-    """ Checks if the server is operational """
+    """Checks if the server is operational"""
+    return {
+        "status": "available",
+        "agentIdentifier": AGENT_IDENTIFIER,
+        "message": "Server operational"
+    }
 
-    return {"status": "available", "type": "masumi-agent", "message": "Server operational."}
-    # Commented out for simplicity sake but its recommended to include the agentIdentifier
-    #return {"status": "available","agentIdentifier": os.getenv("AGENT_IDENTIFIER"), "message": "The server is running smoothly."}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 5) Retrieve Input Schema (MIP-003: /input_schema)
-# ─────────────────────────────────────────────────────────────────────────────
 @app.get("/input_schema")
-async def input_schema():
-    """
-    Returns the expected input schema for the /start_job endpoint.
-    Fulfills MIP-003 /input_schema endpoint.
-    """
+async def get_input_schema():
+    """Returns input requirements"""
     return {
         "input_data": [
             {
@@ -283,114 +108,227 @@ async def input_schema():
                 "name": "Prompt Description",
                 "data": {
                     "description": "Brief description of the prompt you need engineered",
-                    "placeholder": "e.g., 'Create a prompt for analyzing customer feedback sentiment'"
+                    "placeholder": "e.g., 'Create a prompt for analyzing customer feedback sentiment'",
+                    "validation": {
+                        "required": True,
+                        "min_length": 10,
+                        "max_length": 5000
+                    }
                 }
             }
         ]
     }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 6) Health Check
-# ─────────────────────────────────────────────────────────────────────────────
-@app.get("/health")
-async def health():
-    """
-    Returns the health of the server.
-    """
-    return {
-        "status": "healthy"
+@app.post("/start_job")
+async def start_job(request: StartJobRequest):
+    """Initiates a new job with payment"""
+    job_id = str(uuid.uuid4())
+    text = request.input_data.get("text", "")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Text field required in input_data")
+
+    logger.info(f"Starting job {job_id}")
+
+    # Try payment service if configured
+    if config and AGENT_IDENTIFIER:
+        try:
+            amounts = [Amount(amount=PAYMENT_AMOUNT, unit=PAYMENT_UNIT)]
+
+            payment = Payment(
+                agent_identifier=AGENT_IDENTIFIER,
+                amounts=amounts,
+                config=config,
+                identifier_from_purchaser=request.identifier_from_purchaser,
+                input_data=request.input_data,
+                network=NETWORK
+            )
+
+            payment_request = await payment.create_payment_request()
+            blockchain_identifier = payment_request["data"]["blockchainIdentifier"]
+            payment.payment_ids.add(blockchain_identifier)
+
+            # Store job
+            jobs[job_id] = {
+                "status": "awaiting_payment",
+                "payment_status": "pending",
+                "blockchain_identifier": blockchain_identifier,
+                "input_data": request.input_data,
+                "result": None
+            }
+
+            # Payment callback
+            async def payment_callback(bid: str):
+                await handle_payment_confirmed(job_id, bid)
+
+            payment_instances[job_id] = payment
+            await payment.start_status_monitoring(payment_callback)
+
+            return {
+                "status": "success",
+                "job_id": job_id,
+                "blockchainIdentifier": blockchain_identifier,
+                "submitResultTime": payment_request["data"]["submitResultTime"],
+                "unlockTime": payment_request["data"]["unlockTime"],
+                "agentIdentifier": AGENT_IDENTIFIER,
+                "amounts": [{"amount": amt.amount, "unit": amt.unit} for amt in amounts],
+                "payByTime": payment_request["data"]["payByTime"]
+            }
+
+        except Exception as e:
+            logger.warning(f"Payment service unavailable: {str(e)}")
+            # Fall through to execute without payment
+
+    # Execute without payment
+    logger.info("Executing job without payment")
+
+    jobs[job_id] = {
+        "status": "running",
+        "input_data": request.input_data,
+        "result": None
     }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 7) Test Endpoint (No Payment Required - For Local Testing)
-# ─────────────────────────────────────────────────────────────────────────────
-@app.post("/test_prompt_engineering")
-async def test_prompt_engineering(data: dict):
-    """
-    Test the prompt engineering without payment (for local testing only)
-
-    Example:
-    {
-        "text": "Create a prompt for sentiment analysis"
-    }
-    """
     try:
-        logger.info("Testing prompt engineering without payment")
-        text = data.get("text", "")
+        result = await execute_prompt_engineering(text)
+        jobs[job_id]["status"] = "completed"
+        jobs[job_id]["result"] = result
 
-        if not text:
-            raise HTTPException(status_code=400, detail="Text field is required")
-
-        # Execute prompt engineering directly
-        result = await execute_crew_task(text)
-
-        logger.info("Test completed successfully")
         return {
-            "status": "success",
-            "engineered_prompt": result
+            "status": "completed",
+            "job_id": job_id,
+            "result": result
         }
     except Exception as e:
-        logger.error(f"Error in test endpoint: {str(e)}", exc_info=True)
+        logger.error(f"Error executing job: {str(e)}", exc_info=True)
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["error"] = str(e)
         raise HTTPException(status_code=500, detail=str(e))
 
+async def handle_payment_confirmed(job_id: str, payment_id: str):
+    """Execute job after payment confirmation"""
+    try:
+        logger.info(f"Payment confirmed for job {job_id}, executing...")
+
+        jobs[job_id]["status"] = "running"
+        text = jobs[job_id]["input_data"].get("text", "")
+
+        result = await execute_prompt_engineering(text)
+
+        # Complete payment
+        await payment_instances[job_id].complete_payment(payment_id, result)
+
+        jobs[job_id]["status"] = "completed"
+        jobs[job_id]["payment_status"] = "completed"
+        jobs[job_id]["result"] = result
+
+        # Cleanup
+        if job_id in payment_instances:
+            payment_instances[job_id].stop_status_monitoring()
+            del payment_instances[job_id]
+
+    except Exception as e:
+        logger.error(f"Error processing job {job_id}: {str(e)}", exc_info=True)
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["error"] = str(e)
+
+@app.get("/status")
+async def get_status(job_id: str = Query(..., description="Job ID to check")):
+    """Check job status"""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = jobs[job_id]
+
+    # Update payment status if available
+    if job_id in payment_instances:
+        try:
+            status = await payment_instances[job_id].check_payment_status()
+            job["payment_status"] = status.get("data", {}).get("status")
+        except:
+            pass
+
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "payment_status": job.get("payment_status"),
+        "result": job.get("result")
+    }
+
+@app.post("/provide_input")
+async def provide_input(request: ProvideInputRequest):
+    """Provide additional input to a job"""
+    if request.job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Update job input data
+    jobs[request.job_id]["input_data"].update(request.input_data)
+
+    return {"status": "success", "message": "Input updated"}
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Main Logic if Called as a Script
+# Additional Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
-def main():
-    """Run the standalone agent flow without the API"""
-    import os
-    import asyncio
-    # Disable execution traces to avoid terminal issues
+
+@app.get("/health")
+async def health():
+    """Health check"""
+    return {"status": "healthy"}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Standalone Mode
+# ─────────────────────────────────────────────────────────────────────────────
+def main_standalone():
+    """Run without API"""
     os.environ['CREWAI_DISABLE_TELEMETRY'] = 'true'
 
     print("\n" + "=" * 70)
-    print("🚀 Running Prompt Engineering Agent locally (standalone mode)...")
+    print("🚀 Prompt Engineering AI Agent")
     print("=" * 70 + "\n")
 
-    # Define test input
     test_input = "Create a prompt for analyzing customer feedback sentiment"
+    print(f"Input: {test_input}\n")
 
-    print(f"Input: {test_input}")
-    print("\nProcessing with Prompt Engineering AI...\n")
-
-    # Initialize and run the crew
     crew = PromptEngineeringCrew(verbose=True)
     result = asyncio.run(crew.process_input(text=test_input, style="structured"))
 
-    # Display the result
     print("\n" + "=" * 70)
     print("✅ Engineered Prompt:")
     print("=" * 70 + "\n")
+
     if isinstance(result, dict) and result.get("success"):
         print(result.get("prompt"))
     else:
         print(result)
+
     print("\n" + "=" * 70 + "\n")
 
-    # Ensure terminal is properly reset after CrewAI execution
-    sys.stdout.flush()
-    sys.stderr.flush()
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    import sys
-
     if len(sys.argv) > 1 and sys.argv[1] == "api":
-        # Run API mode
-        port = int(os.environ.get("API_PORT", 8000))
-        # Set host from environment variable, default to localhost for security.
-        # Use host=0.0.0.0 to allow external connections (e.g., in Docker or production).
-        host = os.environ.get("API_HOST", "0.0.0.0")
+        port = int(os.getenv("API_PORT", 8000))
+        host = os.getenv("API_HOST", "0.0.0.0")
 
         print("\n" + "=" * 70)
-        print("🚀 Starting FastAPI server with Masumi integration...")
+        print("🚀 Prompt Engineering AI Agent - MIP-003")
         print("=" * 70)
-        print(f"API Documentation:        http://{host}:{port}/docs")
-        print(f"Availability Check:       http://{host}:{port}/availability")
-        print(f"Status Check:             http://{host}:{port}/status")
-        print(f"Input Schema:             http://{host}:{port}/input_schema\n")
-        print("=" * 70 + "\n")
+        print(f"\nServer: http://{host}:{port}")
+        print(f"Docs:   http://{host}:{port}/docs")
+        print(f"\nMIP-003 Endpoints:")
+        print(f"  GET  /availability")
+        print(f"  GET  /input_schema")
+        print(f"  POST /start_job")
+        print(f"  GET  /status")
+        print(f"  POST /provide_input")
+
+        if config and AGENT_IDENTIFIER:
+            print(f"\n✅ Payment service configured")
+        else:
+            print(f"\n⚠️  Payment service not configured (will run without payments)")
+
+        print("\n" + "=" * 70 + "\n")
 
         uvicorn.run(app, host=host, port=port, log_level="info")
     else:
-        # Run standalone mode
-        main()
+        main_standalone()
