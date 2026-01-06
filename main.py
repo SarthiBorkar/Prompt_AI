@@ -394,21 +394,27 @@ if __name__ == "__main__":
         host = os.getenv("API_HOST", "0.0.0.0")
 
         print("\n" + "=" * 70)
-        print("🚀 Prompt Engineering AI Agent - MIP-003")
+        print("🚀 Production PRD Generator AI Agent - v2.0.0")
         print("=" * 70)
         print(f"\nServer: http://{host}:{port}")
         print(f"Docs:   http://{host}:{port}/docs")
         print(f"\nMIP-003 Endpoints:")
-        print(f"  GET  /availability")
-        print(f"  GET  /input_schema")
-        print(f"  POST /start_job")
-        print(f"  GET  /status")
-        print(f"  POST /provide_input")
+        print(f"  GET  /availability     - Check if agent is operational")
+        print(f"  GET  /input_schema     - Get input requirements")
+        print(f"  POST /start_job        - Generate PRD (with payment)")
+        print(f"  GET  /status?job_id=X  - Check job status")
+        print(f"  POST /provide_input    - Provide additional input")
+        print(f"  GET  /health           - Health check")
 
         if config and AGENT_IDENTIFIER:
-            print(f"\n✅ Payment service configured")
+            print(f"\n💳 Payment Integration:")
+            print(f"   Agent ID: {AGENT_IDENTIFIER[:20]}...")
+            print(f"   Network:  {NETWORK}")
+            print(f"   Service:  {PAYMENT_SERVICE_URL}")
+            print(f"   ⚠️  Note: Agent must be registered at Masumi Registry")
         else:
-            print(f"\n⚠️  Payment service not configured (will run without payments)")
+            print(f"\n⚠️  Payment service NOT configured")
+            print(f"   Agent will run in FREE mode (no payment required)")
 
         print("\n" + "=" * 70 + "\n")
 
