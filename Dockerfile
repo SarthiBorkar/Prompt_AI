@@ -12,11 +12,9 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install dependencies with pip cache and optimizations
-# Using --mount=type=cache speeds up rebuilds significantly
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip setuptools wheel && \
-    pip install -r requirements.txt
+# Install dependencies (optimized for Fly.io)
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Final stage - smaller image
 FROM python:3.12-slim
